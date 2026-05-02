@@ -118,8 +118,13 @@ async def health():
 # Serve built React frontend (production)
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):
-    app.mount("/assets", StaticFiles(directory=os.path.join(_static_dir, "assets")), name="assets")
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(os.path.join(_static_dir, "index.html"))
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
+        file_path = os.path.join(_static_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
         return FileResponse(os.path.join(_static_dir, "index.html"))
