@@ -13,7 +13,7 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # Path to bundled sample data
-DATA_FILE = Path(__file__).parent.parent / "data" / "conflict_events.json"
+DATA_FILE = Path(__file__).parent / "data" / "conflict_events.json"
 
 _cache: List[Dict[str, Any]] = []
 
