@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import DeckGL from '@deck.gl/react'
-import { ScatterplotLayer, IconLayer, TextLayer } from '@deck.gl/layers'
+import { ScatterplotLayer } from '@deck.gl/layers'
 import { Map as MapLibreMap } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -108,23 +108,15 @@ function buildTooltip({ object, layer }) {
 // Uses Carto Voyager Dark — no API key required
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
-// ── Initial view ───────────────────────────────────────────────────────────
-const INITIAL_VIEW = {
-  longitude: 15,
-  latitude: 30,
-  zoom: 2.2,
-  pitch: 0,
-  bearing: 0,
-}
-
 export default function MapView({
   flights,
   ships,
   events,
   visible,
   onSelectEntity,
+  viewState,
+  onViewStateChange,
 }) {
-  const [viewState, setViewState] = useState(INITIAL_VIEW)
 
   // Flight layers
   const flightLayers = useMemo(() => {
@@ -280,7 +272,7 @@ export default function MapView({
   return (
     <DeckGL
       viewState={viewState}
-      onViewStateChange={({ viewState }) => setViewState(viewState)}
+      onViewStateChange={({ viewState: vs }) => onViewStateChange(vs)}
       controller={true}
       layers={allLayers}
       getTooltip={buildTooltip}

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { FlyToInterpolator } from '@deck.gl/core'
 import MapView from './Map.jsx'
 import Sidebar from './Sidebar.jsx'
 import LayerControls from './LayerControls.jsx'
@@ -27,72 +28,139 @@ function StatChip({ icon, label, value, variant }) {
   )
 }
 
+const SQUAWK_MEANINGS = {
+  '7500': 'HIJACK IN PROGRESS',
+  '7600': 'RADIO COMMUNICATIONS FAILURE',
+  '7700': 'GENERAL EMERGENCY / MAYDAY',
+}
+
 function DetailPanel({ selected, onClose }) {
   if (!selected) return null
   const { type, data } = selected
 
   let title = ''
+  let subtitle = ''
   let rows = []
-  let anomalyFlag = null
+  let alertBlock = null
+  let descBlock = null
 
   if (type === 'flight') {
     const f = data
+    const squawkMeaning = SQUAWK_MEANINGS[f.squawk]
     title = `✈ ${f.callsign || f.id}`
+    subtitle = f.country || ''
     rows = [
       ['ICAO24', f.id],
-      ['COUNTRY', f.country || '—'],
+      ['ORIGIN', f.country || '—'],
       ['ALTITUDE', f.altitude ? `${f.altitude.toLocaleString()} ft` : '—'],
       ['SPEED', f.speed ? `${f.speed} kts` : '—'],
       ['HEADING', f.heading != null ? `${f.heading}°` : '—'],
       ['SQUAWK', f.squawk || '—'],
-      ['POSITION', `${Math.abs(f.lat).toFixed(3)}°${f.lat>=0?'N':'S'} ${Math.abs(f.lon).toFixed(3)}°${f.lon>=0?'E':'W'}`],
+      ['POSITION', `${Math.abs(f.lat).toFixed(4)}°${f.lat>=0?'N':'S'}  ${Math.abs(f.lon).toFixed(4)}°${f.lon>=0?'E':'W'}`],
     ]
     if (f.anomaly) {
-      anomalyFlag = { text: f.anomaly_reason, severity: f.severity }
+      alertBlock = {
+        severity: f.severity,
+        headline: f.anomaly_reason,
+        detail: squawkMeaning
+          ? `Squawk ${f.squawk} indicates: ${squawkMeaning}. ATC has been notified. Aircraft may be declaring an emergency or under duress.`
+          : f.severity === 'HIGH'
+            ? 'This aircraft is broadcasting an emergency transponder code. Military and civilian ATC are monitoring. Intercept protocols may be active.'
+            : 'Unusual flight parameters detected. This aircraft is deviating from expected behavior patterns.',
+      }
     }
   } else if (type === 'ship') {
     const s = data
     title = `⛴ ${s.name || s.id}`
+    subtitle = `${s.flag || ''} · ${s.type || 'Vessel'}`
     rows = [
       ['MMSI', s.id],
       ['TYPE', s.type || '—'],
       ['FLAG', s.flag || '—'],
       ['SPEED', s.speed ? `${s.speed} kts` : '—'],
       ['HEADING', s.heading != null ? `${s.heading}°` : '—'],
-      ['AIS GAP', s.ais_gap_hours > 0 ? `${s.ais_gap_hours}h` : 'Current'],
+      ['AIS GAP', s.ais_gap_hours > 0 ? `${s.ais_gap_hours}h dark` : 'Transmitting'],
       ['LAST SEEN', s.last_seen ? new Date(s.last_seen).toLocaleTimeString('en-US', {hour12:false}) + ' UTC' : '—'],
-      ['POSITION', `${Math.abs(s.lat).toFixed(3)}°${s.lat>=0?'N':'S'} ${Math.abs(s.lon).toFixed(3)}°${s.lon>=0?'E':'W'}`],
+      ['POSITION', `${Math.abs(s.lat).toFixed(4)}°${s.lat>=0?'N':'S'}  ${Math.abs(s.lon).toFixed(4)}°${s.lon>=0?'E':'W'}`],
     ]
     if (s.anomaly) {
-      anomalyFlag = { text: s.anomaly_reason, severity: s.severity }
+      alertBlock = {
+        severity: s.severity,
+        headline: s.anomaly_reason,
+        detail: s.ais_gap_hours > 6
+          ? `Vessel has not transmitted AIS for ${s.ais_gap_hours} hours. Vessels may disable AIS to avoid detection during smuggling, sanctions evasion, or illegal fishing. Last known position logged.`
+          : `Vessel speed of ${s.speed} kts exceeds normal operating parameters. Most cargo vessels cruise at 12–18 kts. This may indicate evasive maneuvering or erroneous data.`,
+      }
     }
   } else if (type === 'event') {
     const ev = data
+    const fatalityLevel = ev.fatalities >= 20 ? 'HIGH' : ev.fatalities >= 5 ? 'MEDIUM' : 'LOW'
     title = `⚠ ${ev.type}`
+    subtitle = `${ev.country} · ${ev.date}`
     rows = [
       ['COUNTRY', ev.country],
       ['DATE', ev.date],
-      ['FATALITIES', String(ev.fatalities)],
-      ['POSITION', `${Math.abs(ev.lat).toFixed(3)}°${ev.lat>=0?'N':'S'} ${Math.abs(ev.lon).toFixed(3)}°${ev.lon>=0?'E':'W'}`],
+      ['FATALITIES', ev.fatalities > 0 ? `${ev.fatalities} confirmed` : 'None reported'],
+      ['POSITION', `${Math.abs(ev.lat).toFixed(4)}°${ev.lat>=0?'N':'S'}  ${Math.abs(ev.lon).toFixed(4)}°${ev.lon>=0?'E':'W'}`],
     ]
-    anomalyFlag = { text: ev.description, severity: 'MEDIUM' }
+    descBlock = ev.description
+    alertBlock = {
+      severity: fatalityLevel,
+      headline: `${ev.type} — ${ev.country}`,
+      detail: ev.fatalities > 0
+        ? `${ev.fatalities} fatalities reported. Source: ACLED conflict monitoring dataset.`
+        : 'No fatalities reported. Event logged for situational awareness.',
+    }
+  }
+
+  const severityColors = {
+    HIGH:   { border: '#ef4444', bg: 'rgba(239,68,68,0.08)', text: '#ef4444' },
+    MEDIUM: { border: '#eab308', bg: 'rgba(234,179,8,0.08)',  text: '#eab308' },
+    LOW:    { border: '#22c55e', bg: 'rgba(34,197,94,0.08)',  text: '#22c55e' },
   }
 
   return (
     <div className="detail-panel">
       <div className="detail-panel__header">
-        <span className="detail-panel__title">{title}</span>
+        <div>
+          <div className="detail-panel__title">{title}</div>
+          {subtitle && <div className="detail-panel__subtitle">{subtitle}</div>}
+        </div>
         <button className="detail-panel__close" onClick={onClose}>✕</button>
       </div>
-      {rows.map(([key, val]) => (
-        <div key={key} className="detail-panel__row">
-          <span className="detail-panel__key">{key}</span>
-          <span className="detail-panel__val">{val}</span>
-        </div>
-      ))}
-      {anomalyFlag && (
-        <div className={`detail-panel__anomaly-flag detail-panel__anomaly-flag--${anomalyFlag.severity}`}>
-          {anomalyFlag.text}
+
+      {alertBlock && (() => {
+        const c = severityColors[alertBlock.severity] || severityColors.LOW
+        return (
+          <div style={{
+            margin: '10px 0',
+            padding: '10px 12px',
+            borderLeft: `3px solid ${c.border}`,
+            background: c.bg,
+            borderRadius: '0 4px 4px 0',
+          }}>
+            <div style={{ color: c.text, fontWeight: 700, fontSize: 11, letterSpacing: '0.08em', marginBottom: 4 }}>
+              {alertBlock.severity} ALERT — {alertBlock.headline}
+            </div>
+            <div style={{ color: '#94a3b8', fontSize: 11, lineHeight: 1.6 }}>
+              {alertBlock.detail}
+            </div>
+          </div>
+        )
+      })()}
+
+      <div style={{ marginTop: 8 }}>
+        {rows.map(([key, val]) => (
+          <div key={key} className="detail-panel__row">
+            <span className="detail-panel__key">{key}</span>
+            <span className="detail-panel__val">{val}</span>
+          </div>
+        ))}
+      </div>
+
+      {descBlock && (
+        <div style={{ marginTop: 10, padding: '8px 10px', background: 'rgba(255,255,255,0.03)', borderRadius: 4, fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
+          {descBlock}
         </div>
       )}
     </div>
@@ -113,6 +181,25 @@ export default function App() {
     ships: true,
     events: true,
   })
+
+  const [viewState, setViewState] = useState({
+    longitude: 15,
+    latitude: 30,
+    zoom: 2.2,
+    pitch: 0,
+    bearing: 0,
+  })
+
+  const flyTo = useCallback((lon, lat, zoom = 6) => {
+    setViewState(vs => ({
+      ...vs,
+      longitude: lon,
+      latitude: lat,
+      zoom,
+      transitionDuration: 1200,
+      transitionInterpolator: new FlyToInterpolator({ speed: 1.5 }),
+    }))
+  }, [])
 
   const fetchAll = useCallback(async () => {
     try {
@@ -149,24 +236,32 @@ export default function App() {
   }, [])
 
   const handleAnomalyClick = useCallback((anomaly) => {
-    // Find the underlying entity
     const type = anomaly.entity_type === 'FLIGHT' ? 'flight' : 'ship'
     if (type === 'flight') {
       const f = flights.find(x => x.id === anomaly.entity_id)
-      if (f) setSelected({ type: 'flight', data: f })
+      if (f) {
+        setSelected({ type: 'flight', data: f })
+        flyTo(f.lon, f.lat, 6)
+      }
     } else {
       const s = ships.find(x => x.id === anomaly.entity_id)
-      if (s) setSelected({ type: 'ship', data: s })
+      if (s) {
+        setSelected({ type: 'ship', data: s })
+        flyTo(s.lon, s.lat, 5)
+      }
     }
-  }, [flights, ships])
+  }, [flights, ships, flyTo])
 
   const handleEventClick = useCallback((ev) => {
     setSelected({ type: 'event', data: ev })
-  }, [])
+    flyTo(ev.lon, ev.lat, 5)
+  }, [flyTo])
 
   const handleSelectEntity = useCallback((entity) => {
     setSelected(entity)
-  }, [])
+    const d = entity.data
+    if (d?.lon != null && d?.lat != null) flyTo(d.lon, d.lat, 6)
+  }, [flyTo])
 
   const flightAnomalyCount = flights.filter(f => f.anomaly).length
   const shipAnomalyCount = ships.filter(s => s.anomaly).length
@@ -243,6 +338,8 @@ export default function App() {
               events={events}
               visible={visible}
               onSelectEntity={handleSelectEntity}
+              viewState={viewState}
+              onViewStateChange={setViewState}
             />
             <LayerControls
               visible={visible}
